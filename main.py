@@ -2,6 +2,7 @@
 main.py — entry point for the local voice chatbot
 """
 
+import logging
 import tkinter as tk
 from tkinter import messagebox
 
@@ -9,6 +10,8 @@ from stt import SpeechToText
 from tts import TextToSpeech
 from ollama_client import OllamaClient
 from gui import VoiceChatGUI
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 DEFAULT_MODEL = "llama3"   # change to any model you have pulled, e.g. "mistral"
 

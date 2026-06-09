@@ -2,10 +2,11 @@
 stt.py — Vosk speech-to-text
 
 Downloads the small English model on first run (~50 MB).
-Call listen() to record one utterance and return the transcript string.
+Call listen() to record until the stop_event is set and return the full transcript.
 """
 
 import json
+import logging
 import os
 import queue
 import threading
@@ -14,6 +15,8 @@ import zipfile
 
 import pyaudio
 from vosk import KaldiRecognizer, Model
+
+logger = logging.getLogger(__name__)
 
 MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "vosk-model-small-en-us-0.15")
@@ -51,18 +54,18 @@ class SpeechToText:
         self._model = Model(MODEL_DIR)
         self._recognizer = KaldiRecognizer(self._model, SAMPLE_RATE)
         self._audio = pyaudio.PyAudio()
-        self._stop_event = threading.Event()
 
     def listen(self, on_partial=None, stop_event: threading.Event = None) -> str:
         """
-        Record audio from the mic until silence is detected.
+        Record audio from the mic, accumulating all finalized utterances
+        until stop_event is set or silence ends the session.
 
         Args:
             on_partial: optional callback(str) called with partial transcripts.
-            stop_event: optional threading.Event; set it to abort early.
+            stop_event: optional threading.Event; set it to stop recording.
 
         Returns:
-            Final transcript string (may be empty).
+            Full transcript string of everything spoken (may be empty).
         """
         stream = self._audio.open(
             format=pyaudio.paInt16,
@@ -72,17 +75,23 @@ class SpeechToText:
             frames_per_buffer=CHUNK,
         )
 
-        result_text = ""
+        parts: list[str] = []
         try:
             while True:
                 if stop_event and stop_event.is_set():
+                    # Flush any remaining audio before exiting
+                    final = json.loads(self._recognizer.FinalResult())
+                    text = final.get("text", "").strip()
+                    if text:
+                        parts.append(text)
                     break
                 data = stream.read(CHUNK, exception_on_overflow=False)
                 if self._recognizer.AcceptWaveform(data):
                     res = json.loads(self._recognizer.Result())
-                    result_text = res.get("text", "")
-                    if result_text:
-                        break
+                    text = res.get("text", "").strip()
+                    if text:
+                        parts.append(text)
+                        logger.debug("STT utterance: %s", text)
                 else:
                     if on_partial:
                         partial = json.loads(self._recognizer.PartialResult())
@@ -92,7 +101,7 @@ class SpeechToText:
             stream.close()
             self._recognizer = KaldiRecognizer(self._model, SAMPLE_RATE)  # reset
 
-        return result_text.strip()
+        return " ".join(parts)
 
     def close(self):
         self._audio.terminate()

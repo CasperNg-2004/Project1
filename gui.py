@@ -174,7 +174,7 @@ class VoiceChatGUI:
         mic_row.pack(pady=(0, 10))
 
         self._mic_btn = tk.Button(
-            mic_row, text="🎙  Hold to Speak",
+            mic_row, text="🎙  Click to Speak",
             bg=BORDER, fg=TEXT_PRI, activebackground=RED,
             font=("Courier New", 11, "bold"), relief=tk.FLAT,
             padx=20, pady=10,
@@ -207,7 +207,7 @@ class VoiceChatGUI:
     def _stop_recording(self):
         self._stop_rec.set()
         self._recording = False
-        self._mic_btn.config(text="🎙  Hold to Speak", bg=BORDER, fg=TEXT_PRI)
+        self._mic_btn.config(text="🎙  Click to Speak", bg=BORDER, fg=TEXT_PRI)
         self._set_status("Processing…", ACCENT2)
 
     def _record_thread(self):
@@ -235,12 +235,15 @@ class VoiceChatGUI:
         threading.Thread(target=self._llm_thread, args=(text,), daemon=True).start()
 
     def _llm_thread(self, text: str):
+        # Create a streaming bubble so the user sees tokens arrive live
+        self.root.after(0, self._start_streaming_bubble)
         tokens = []
         for token in self.llm.stream_chat(text):
             tokens.append(token)
+            self.root.after(0, self._append_stream_token, token)
 
         reply = "".join(tokens)
-        self.root.after(0, self._add_bubble, "assistant", reply)
+        self.root.after(0, self._finalise_streaming_bubble, reply)
         self.root.after(0, self._set_status, "Speaking…", ACCENT2)
         self.tts.speak(reply, on_done=lambda: self.root.after(
             0, self._set_status, "Ready", TEXT_SEC))
@@ -271,6 +274,44 @@ class VoiceChatGUI:
         self._set_status("Ready", TEXT_SEC)
 
     # ── UI helpers ─────────────────────────────────────────────────────────
+
+    def _start_streaming_bubble(self):
+        """Create a live assistant bubble that tokens are appended to."""
+        self._stream_bubble_frame = tk.Frame(self._chat_inner, bg=BG)
+        self._stream_bubble_frame.pack(fill=tk.X, pady=2)
+
+        lbl = tk.Label(self._stream_bubble_frame, text="Assistant",
+                       bg=BG, fg=ACCENT2, font=("Courier New", 9, "bold"))
+        lbl.pack(anchor=tk.W, padx=12, pady=(4, 0))
+
+        bubble = tk.Frame(self._stream_bubble_frame, bg=SURFACE,
+                          highlightbackground=BORDER, highlightthickness=1)
+        bubble.pack(anchor=tk.W, padx=12, pady=(0, 6))
+
+        self._stream_text_var = tk.StringVar(value="")
+        self._stream_label = tk.Label(
+            bubble, textvariable=self._stream_text_var,
+            bg=SURFACE, fg=TEXT_PRI, font=("Courier New", 11),
+            wraplength=480, justify=tk.LEFT, padx=12, pady=8)
+        self._stream_label.pack()
+        self._stream_tokens: list[str] = []
+
+    def _append_stream_token(self, token: str):
+        """Append a new token to the live streaming bubble."""
+        self._stream_tokens.append(token)
+        self._stream_text_var.set("".join(self._stream_tokens))
+        self._canvas.update_idletasks()
+        self._canvas.yview_moveto(1.0)
+
+    def _finalise_streaming_bubble(self, full_reply: str):
+        """
+        Replace the streaming bubble with a proper ChatBubble.
+        This ensures consistent styling and avoids stale StringVar references.
+        """
+        if hasattr(self, "_stream_bubble_frame"):
+            self._stream_bubble_frame.destroy()
+            del self._stream_bubble_frame
+        self._add_bubble("assistant", full_reply)
 
     def _add_bubble(self, role: str, text: str):
         bubble = ChatBubble(self._chat_inner, role=role, text=text)
